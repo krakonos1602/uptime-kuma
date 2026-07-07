@@ -56,22 +56,33 @@
                 </div>
 
                 <div class="my-3">
-                    <label for="heartbeat-bar-days" class="form-label">{{ $t("Heartbeat Bar Days") }}</label>
-                    <input
-                        id="heartbeat-bar-days"
-                        v-model.number="config.heartbeatBarDays"
-                        type="number"
-                        class="form-control"
-                        min="0"
-                        max="365"
-                        data-testid="heartbeat-bar-days-input"
-                    />
-                    <div v-if="config.heartbeatBarDays === 0" class="form-text">
+                    <label for="heartbeat-bar-mode" class="form-label">{{ $t("Heartbeat Bar") }}</label>
+                    <select
+                        id="heartbeat-bar-mode"
+                        v-model="heartbeatBarMode"
+                        class="form-select"
+                        data-testid="heartbeat-bar-mode-select"
+                    >
+                        <option value="auto">{{ $t("Auto (latest heartbeats)") }}</option>
+                        <option value="range">{{ $t("Fixed time range") }}</option>
+                    </select>
+                    <div v-if="heartbeatBarMode === 'auto'" class="form-text">
                         {{ $t("Status page will show last beats", [100]) }}
                     </div>
-                    <div v-else class="form-text">
-                        {{ $t("Status page shows heartbeat history days", [config.heartbeatBarDays]) }}
-                    </div>
+                    <template v-else>
+                        <input
+                            id="heartbeat-bar-days"
+                            v-model.number="config.heartbeatBarDays"
+                            type="number"
+                            class="form-control mt-2"
+                            min="1"
+                            max="365"
+                            data-testid="heartbeat-bar-days-input"
+                        />
+                        <div class="form-text">
+                            {{ $t("Status page shows heartbeat history days", [config.heartbeatBarDays]) }}
+                        </div>
+                    </template>
                 </div>
 
                 <div class="my-3">
@@ -709,6 +720,7 @@ export default {
             enableEditMode: false,
             enableEditIncidentMode: false,
             hasToken: false,
+            heartbeatBarMode: "auto",
             config: {
                 heartbeatBarDays: 0,
                 analyticsType: null,
@@ -919,6 +931,19 @@ export default {
     },
     watch: {
         /**
+         * Switch between auto and a fixed day range for the heartbeat bar
+         * @param {string} mode Selected mode ("auto" or "range")
+         * @returns {void}
+         */
+        heartbeatBarMode(mode) {
+            if (mode === "auto") {
+                this.config.heartbeatBarDays = 0;
+            } else if (!this.config.heartbeatBarDays) {
+                this.config.heartbeatBarDays = 90;
+            }
+        },
+
+        /**
          * If connected to the socket and logged in, request private data of this statusPage
          * @param {boolean} loggedIn Is the client logged in?
          * @returns {void}
@@ -938,6 +963,7 @@ export default {
                         } else {
                             this.config.heartbeatBarDays = parseInt(this.config.heartbeatBarDays, 10) || 0;
                         }
+                        this.heartbeatBarMode = this.config.heartbeatBarDays > 0 ? "range" : "auto";
 
                         if (!this.config.customCSS) {
                             this.config.customCSS = "body {\n" + "  \n" + "}\n";
