@@ -131,6 +131,14 @@ router.get("/api/status-page/heartbeat/:slug", cache("1 minutes"), async (reques
                                       ? UP
                                       : 0,
                         time: dayjs.unix(bucket.end).toISOString(),
+                        // window bounds and per-status counts for the aggregated tooltip
+                        start: dayjs.unix(bucket.start).toISOString(),
+                        counts: {
+                            up: bucket.up,
+                            down: bucket.down,
+                            maintenance: bucket.maintenance,
+                            pending: bucket.pending,
+                        },
                         msg: "",
                         ping: null,
                     };

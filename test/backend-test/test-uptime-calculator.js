@@ -762,17 +762,22 @@ test("Test getAggregatedBuckets - 31-63 day edge case (daily data)", async (t) =
         assert.strictEqual(buckets[i].end, buckets[i + 1].start, `Gap found between bucket ${i} and ${i + 1}`);
     }
 
-    // Verify total counts
+    // A day's data can straddle two adjacent buckets, so counts are bounded, not exact
     let totalUp = buckets.reduce((sum, b) => sum + b.up, 0);
     let totalDown = buckets.reduce((sum, b) => sum + b.down, 0);
 
-    // We added 35 days of data (within the range), with pattern: i % 3 === 0 ? DOWN : UP
-    // Days 0,3,6,9,12,15,18,21,24,27,30,33 = 12 DOWN days
-    // Days 1,2,4,5,7,8,10,11,13,14,16,17,19,20,22,23,25,26,28,29,31,32,34 = 23 UP days
-    const expectedDown = 12;
-    const expectedUp = 23;
-    assert.strictEqual(totalDown, expectedDown, `Should have exactly ${expectedDown} DOWN heartbeats`);
-    assert.strictEqual(totalUp, expectedUp, `Should have exactly ${expectedUp} UP heartbeats`);
+    // 35 days of data (pattern i % 3 === 0 ? DOWN : UP) = 12 DOWN days, 23 UP days
+    const rawDown = 12;
+    const rawUp = 23;
+    assert.ok(totalDown >= rawDown, `DOWN total ${totalDown} below raw ${rawDown}`);
+    assert.ok(totalUp >= rawUp, `UP total ${totalUp} below raw ${rawUp}`);
+    buckets.forEach((b, i) => {
+        assert.ok(b.up + b.down <= 2, `Bucket ${i} aggregates more than two daily intervals`);
+    });
+
+    // Every outage day stays visible
+    let downBuckets = buckets.filter((b) => b.down > 0).length;
+    assert.ok(downBuckets >= rawDown, `Every DOWN day should be visible, got ${downBuckets} down buckets`);
 });
 
 test("Test getAggregatedBuckets - Daily data includes downtime after uptime", async (t) => {
@@ -801,17 +806,16 @@ test("Test getAggregatedBuckets - Daily data includes downtime after uptime", as
 
     assert.strictEqual(buckets.length, 35);
 
-    // Count total UP and DOWN beats
     let totalUp = buckets.reduce((sum, b) => sum + b.up, 0);
     let totalDown = buckets.reduce((sum, b) => sum + b.down, 0);
 
-    // We should have exactly 30 UP and 5 DOWN beats
-    assert.strictEqual(totalUp, 30, "Should have 30 UP beats from the long uptime period");
-    assert.strictEqual(totalDown, 5, "Should have 5 DOWN beats from the recent downtime");
+    // 30 UP days and 5 DOWN days, bounded not exact because of boundary overlap
+    assert.ok(totalUp >= 30, `Should keep at least the 30 UP beats, got ${totalUp}`);
+    assert.ok(totalDown >= 5, `Should keep at least the 5 DOWN beats, got ${totalDown}`);
 
-    // Verify the recent buckets contain DOWN data
-    let recentDownCount = buckets.slice(-5).reduce((sum, b) => sum + b.down, 0);
-    assert.strictEqual(recentDownCount, 5, "Recent 5 buckets should contain all DOWN beats");
+    // Recent downtime must stay visible near the now edge
+    let recentDownCount = buckets.slice(-8).reduce((sum, b) => sum + b.down, 0);
+    assert.ok(recentDownCount >= 5, `Recent buckets should contain the DOWN beats, got ${recentDownCount}`);
 });
 
 test("Test getAggregatedBuckets - Bucket structure validation", async (t) => {
@@ -1000,6 +1004,49 @@ test("Test getAggregatedBuckets - Mixed data granularity", async (t) => {
     assert.ok(buckets1d.some((b) => b.up > 0));
     assert.ok(buckets7d.some((b) => b.up > 0 || b.down > 0));
     assert.ok(buckets35d.some((b) => b.up > 0 || b.down > 0));
+});
+
+test("Test getAggregatedBuckets - No gaps in continuous data", async (t) => {
+    // Requesting more display beats than the range has data points used to leave empty
+    // grey buckets between real beats even though the monitor reported continuously.
+    UptimeCalculator.currentDate = dayjs.utc("2025-08-12 12:00:00");
+    let currentTime = dayjs.utc("2025-08-12 12:00:00");
+    let c = new UptimeCalculator();
+
+    // One heartbeat per hour for the last 90 days, no real outages
+    for (let i = 90 * 24; i >= 0; i--) {
+        UptimeCalculator.currentDate = currentTime.subtract(i, "hour");
+        await c.update(UP);
+    }
+    UptimeCalculator.currentDate = currentTime;
+
+    // Each scenario asks for more beats than the range has data points
+    const scenarios = [
+        { days: 42, requested: 67 },
+        { days: 32, requested: 100 },
+        { days: 90, requested: 100 },
+        { days: 2, requested: 100 },
+        { days: 90, requested: 40 },
+    ];
+
+    const isEmpty = (b) => b.up === 0 && b.down === 0 && b.maintenance === 0 && b.pending === 0;
+
+    for (const { days, requested } of scenarios) {
+        const buckets = c.getAggregatedBuckets(days, requested);
+
+        assert.strictEqual(
+            buckets.length,
+            requested,
+            `${days}d/${requested}: should keep the requested bucket count`
+        );
+
+        const emptyCount = buckets.filter(isEmpty).length;
+        assert.strictEqual(
+            emptyCount,
+            0,
+            `${days}d/${requested}: continuous data must fill every bucket (found ${emptyCount} empty)`
+        );
+    }
 });
 
 test("Worst case", async (t) => {

@@ -853,24 +853,30 @@ class UptimeCalculator {
     getAggregatedBuckets(days, targetBuckets = 100) {
         const now = this.getCurrentDate();
         const startTime = now.subtract(days, "day");
-        const totalMinutes = days * 60 * 24;
-        const bucketSizeMinutes = totalMinutes / targetBuckets;
 
-        // Get raw data points from UptimeCalculator (sorted in descending order by timestamp)
+        // Raw data points and the length of the interval each one represents
         let rawDataPoints;
+        let granularitySeconds;
 
+        // Fetch one extra interval so the oldest bucket is fully covered
         if (days <= 1) {
             const exactMinutes = Math.ceil(days * 24 * 60);
-            rawDataPoints = this.getDataArray(exactMinutes, "minute");
+            rawDataPoints = this.getDataArray(Math.min(exactMinutes + 1, 1440), "minute");
+            granularitySeconds = 60;
         } else if (days <= 30) {
             // For 1-30 days, use hourly data (up to 720 hours)
-            const exactHours = Math.min(Math.ceil(days * 24), 720);
+            const exactHours = Math.min(Math.ceil(days * 24) + 1, 720);
             rawDataPoints = this.getDataArray(exactHours, "hour");
+            granularitySeconds = 3600;
         } else {
             // For > 30 days, use daily data
-            const requestDays = Math.min(days, 365);
+            const requestDays = Math.min(days + 1, 365);
             rawDataPoints = this.getDataArray(requestDays, "day");
+            granularitySeconds = 86400;
         }
+
+        const totalMinutes = days * 60 * 24;
+        const bucketSizeMinutes = totalMinutes / targetBuckets;
 
         // Create exactly targetBuckets buckets spanning the full requested time range
         const buckets = [];
@@ -893,29 +899,23 @@ class UptimeCalculator {
             .filter((point) => point && point.timestamp)
             .sort((a, b) => a.timestamp - b.timestamp);
 
-        // Single-pass aggregation: iterate through sorted data and buckets together
-        // O(n + m) instead of O(n * m) complexity
-        let currentBucketIndex = 0;
+        // Distribute each data point across every display bucket its interval overlaps
+        let firstBucketIndex = 0;
 
         for (const dataPoint of sortedDataPoints) {
-            const timestamp = dataPoint.timestamp;
+            const pointStart = dataPoint.timestamp;
+            const pointEnd = dataPoint.timestamp + granularitySeconds;
 
-            // Move to the appropriate bucket (only forward, since data is sorted)
-            while (currentBucketIndex < buckets.length && timestamp >= buckets[currentBucketIndex].end) {
-                currentBucketIndex++;
+            while (firstBucketIndex < buckets.length && buckets[firstBucketIndex].end <= pointStart) {
+                firstBucketIndex++;
             }
 
-            // Check if timestamp falls within current bucket
-            if (currentBucketIndex < buckets.length) {
-                const bucket = buckets[currentBucketIndex];
-                if (timestamp >= bucket.start && timestamp < bucket.end) {
-                    bucket.up += dataPoint.up || 0;
-                    bucket.down += dataPoint.down || 0;
-                    if (days > 30) {
-                        bucket.maintenance += dataPoint.maintenance || 0;
-                        bucket.pending += dataPoint.pending || 0;
-                    }
-                }
+            for (let i = firstBucketIndex; i < buckets.length && buckets[i].start < pointEnd; i++) {
+                const bucket = buckets[i];
+                bucket.up += dataPoint.up || 0;
+                bucket.down += dataPoint.down || 0;
+                bucket.maintenance += dataPoint.maintenance || 0;
+                bucket.pending += dataPoint.pending || 0;
             }
         }
 
