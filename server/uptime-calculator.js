@@ -845,6 +845,84 @@ class UptimeCalculator {
     }
 
     /**
+     * Get aggregated heartbeat buckets for a specific time range
+     * @param {number} days Number of days to aggregate
+     * @param {number} targetBuckets Number of buckets to create (default 100)
+     * @returns {Array} Array of aggregated bucket data
+     */
+    getAggregatedBuckets(days, targetBuckets = 100) {
+        const now = this.getCurrentDate();
+        const startTime = now.subtract(days, "day");
+
+        // Raw data points and the length of the interval each one represents
+        let rawDataPoints;
+        let granularitySeconds;
+
+        // Fetch one extra interval so the oldest bucket is fully covered
+        if (days <= 1) {
+            const exactMinutes = Math.ceil(days * 24 * 60);
+            rawDataPoints = this.getDataArray(Math.min(exactMinutes + 1, 1440), "minute");
+            granularitySeconds = 60;
+        } else if (days <= 30) {
+            // For 1-30 days, use hourly data (up to 720 hours)
+            const exactHours = Math.min(Math.ceil(days * 24) + 1, 720);
+            rawDataPoints = this.getDataArray(exactHours, "hour");
+            granularitySeconds = 3600;
+        } else {
+            // For > 30 days, use daily data
+            const requestDays = Math.min(days + 1, 365);
+            rawDataPoints = this.getDataArray(requestDays, "day");
+            granularitySeconds = 86400;
+        }
+
+        const totalMinutes = days * 60 * 24;
+        const bucketSizeMinutes = totalMinutes / targetBuckets;
+
+        // Create exactly targetBuckets buckets spanning the full requested time range
+        const buckets = [];
+        for (let i = 0; i < targetBuckets; i++) {
+            const bucketStart = startTime.add(i * bucketSizeMinutes, "minute");
+            const bucketEnd = startTime.add((i + 1) * bucketSizeMinutes, "minute");
+
+            buckets.push({
+                start: bucketStart.unix(),
+                end: bucketEnd.unix(),
+                up: 0,
+                down: 0,
+                maintenance: 0,
+                pending: 0,
+            });
+        }
+
+        // Sort data points by timestamp ascending for efficient single-pass aggregation
+        const sortedDataPoints = rawDataPoints
+            .filter((point) => point && point.timestamp)
+            .sort((a, b) => a.timestamp - b.timestamp);
+
+        // Distribute each data point across every display bucket its interval overlaps
+        let firstBucketIndex = 0;
+
+        for (const dataPoint of sortedDataPoints) {
+            const pointStart = dataPoint.timestamp;
+            const pointEnd = dataPoint.timestamp + granularitySeconds;
+
+            while (firstBucketIndex < buckets.length && buckets[firstBucketIndex].end <= pointStart) {
+                firstBucketIndex++;
+            }
+
+            for (let i = firstBucketIndex; i < buckets.length && buckets[i].start < pointEnd; i++) {
+                const bucket = buckets[i];
+                bucket.up += dataPoint.up || 0;
+                bucket.down += dataPoint.down || 0;
+                bucket.maintenance += dataPoint.maintenance || 0;
+                bucket.pending += dataPoint.pending || 0;
+            }
+        }
+
+        return buckets;
+    }
+
+    /**
      * Clear all statistics and heartbeats for a monitor
      * @param {number} monitorID the id of the monitor
      * @returns {Promise<void>}

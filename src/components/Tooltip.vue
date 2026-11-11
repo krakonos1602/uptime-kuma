@@ -14,6 +14,16 @@
                         {{ statusText }}
                     </div>
                     <div class="tooltip-time">{{ timeText }}</div>
+                    <div v-if="breakdownItems.length" class="tooltip-breakdown">
+                        <span
+                            v-for="(item, index) in breakdownItems"
+                            :key="index"
+                            class="breakdown-item"
+                            :class="item.class"
+                        >
+                            {{ item.count }}× {{ item.label }}
+                        </span>
+                    </div>
                     <div v-if="content?.msg" class="tooltip-message">{{ content.msg }}</div>
                 </slot>
             </div>
@@ -105,7 +115,29 @@ export default {
             if (!this.content || this.content === 0) {
                 return "";
             }
-            return this.$root.datetime(this.content.time);
+            // aggregated beats are labelled by their window start
+            return this.$root.datetime(this.content.start || this.content.time);
+        },
+
+        breakdownItems() {
+            const counts = this.content && this.content !== 0 ? this.content.counts : null;
+            if (!counts) {
+                return [];
+            }
+            const items = [];
+            if (counts.up) {
+                items.push({ count: counts.up, label: this.$t("Up"), class: "status-up" });
+            }
+            if (counts.down) {
+                items.push({ count: counts.down, label: this.$t("Down"), class: "status-down" });
+            }
+            if (counts.maintenance) {
+                items.push({ count: counts.maintenance, label: this.$t("Maintenance"), class: "status-maintenance" });
+            }
+            if (counts.pending) {
+                items.push({ count: counts.pending, label: this.$t("Pending"), class: "status-pending" });
+            }
+            return items;
         },
     },
 };
@@ -174,6 +206,38 @@ export default {
             color: #d1d5db;
             font-size: 13px;
             margin-bottom: 2px;
+        }
+
+        .tooltip-breakdown {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 4px 8px;
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px solid rgba(75, 85, 99, 0.3);
+            font-size: 12px;
+            font-weight: 600;
+
+            .breakdown-item {
+                white-space: nowrap;
+
+                &.status-up {
+                    color: $primary;
+                }
+
+                &.status-down {
+                    color: $danger;
+                }
+
+                &.status-pending {
+                    color: $warning;
+                }
+
+                &.status-maintenance {
+                    color: $maintenance;
+                }
+            }
         }
 
         .tooltip-message {
